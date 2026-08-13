@@ -996,10 +996,13 @@ def _admin_only(interaction: discord.Interaction) -> bool:
     """True if the invoking member has Manage Server (or Administrator).
 
     Gates every destructive/broadcast/data-exposing command (/clear, /unban_all,
-    /msg, /restore, /schedule, /download, /dedup, /room, /openvoice). Do NOT widen
-    this for a single command — add a dedicated check instead, the way
-    _can_backup() does for /backup, so a relaxation for one command can't silently
-    open every other command sharing this gate."""
+    /msg, /restore, /schedule, /download, /dedup, /room, /openvoice, /status,
+    /report, /copy [its report half], /search) — /status, /report and /search
+    all surface the secret backup/restore link or full cross-channel message
+    content, so they're gated the same as /download even though they don't
+    mutate anything. Do NOT widen this for a single command — add a dedicated
+    check instead, the way _can_backup() does for /backup, so a relaxation for
+    one command can't silently open every other command sharing this gate."""
     member = interaction.user
     perms = getattr(member, "guild_permissions", None)
     return bool(perms and (perms.manage_guild or perms.administrator))
@@ -1204,8 +1207,9 @@ async def backup_channel_cmd(interaction: discord.Interaction,
 @tree.command(name="status",
               description="معلومات آخر نسخة / Last backup info")
 async def status_cmd(interaction: discord.Interaction):
-    if not interaction.guild:
-        return
+    if not interaction.guild or not _admin_only(interaction):
+        return await interaction.response.send_message(
+            "⛔ Manage Server required.", ephemeral=True)
     conn = storage.open_db(interaction.guild.id)
     run = storage.latest_run(conn)
     total_msgs = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
@@ -1450,13 +1454,16 @@ async def _report_lines(g: discord.Guild) -> list:
 @tree.command(name="report",
               description="تقرير نصي للنسخ بضغطة / copyable text report (tap to copy)")
 async def report_cmd(interaction: discord.Interaction):
-    if not interaction.guild:
-        return await interaction.response.send_message("server-only.", ephemeral=True)
+    if not interaction.guild or not _admin_only(interaction):
+        return await interaction.response.send_message(
+            "⛔ Manage Server required.", ephemeral=True)
     await interaction.response.defer(ephemeral=True, thinking=True)
     body = "\n".join(await _report_lines(interaction.guild))
     # Fenced code block → Discord shows a one-tap "Copy" on the whole block.
+    # ephemeral: this report includes the secret backup/restore link.
     await interaction.followup.send(
-        "📋 انسخ كل هذا وارسله / tap & copy all of this:\n```\n" + body + "\n```")
+        "📋 انسخ كل هذا وارسله / tap & copy all of this:\n```\n" + body + "\n```",
+        ephemeral=True)
 
 
 @tree.command(name="copy",
@@ -1467,7 +1474,8 @@ async def copy_cmd(interaction: discord.Interaction):
     embeds aren't selectable on mobile, but a fenced code block has a Copy button."""
     await interaction.response.defer(ephemeral=True, thinking=True)
     parts = [_commands_text()]
-    if interaction.guild:
+    # The report includes the secret backup/restore link — same gate as /report.
+    if interaction.guild and _admin_only(interaction):
         parts.append("\n" + "\n".join(await _report_lines(interaction.guild)))
     body = "\n".join(parts)
     # Discord messages cap at 2000 chars — chunk the code block if needed.
@@ -1596,6 +1604,22 @@ async def restore_cmd(interaction: discord.Interaction,
             return await interaction.response.send_message(
                 "❌ البوت مو موجود بسيرفر بهالـID — ضيفه هناك أول.\n"
                 "Bot isn't in a server with that ID — add it there first.", ephemeral=True)
+        if target_guild.id != interaction.guild.id:
+            # _admin_only() above only proves Manage Server in the guild this
+            # command was run FROM — restore is destructive to the TARGET, so an
+            # admin of some unrelated guild must not be able to rebuild a
+            # different community they have no permission in. Re-check Manage
+            # Server for this same person in target_guild specifically.
+            try:
+                target_member = await target_guild.fetch_member(interaction.user.id)
+            except discord.HTTPException:
+                target_member = None
+            perms = getattr(target_member, "guild_permissions", None)
+            if not (perms and (perms.manage_guild or perms.administrator)):
+                return await interaction.response.send_message(
+                    "⛔ لازم Manage Server بالسيرفر الوجهة نفسه.\n"
+                    "You need Manage Server in the TARGET server too — not just here.",
+                    ephemeral=True)
     else:
         target_guild = interaction.guild
     # Source: a .zip link (downloaded + extracted) OR a saved backup on disk.
@@ -1682,8 +1706,9 @@ async def schedule_cmd(interaction: discord.Interaction,
               description="ابحث في النسخة المحفوظة / Search archived messages")
 @app_commands.describe(query="الكلمة / search words")
 async def search_cmd(interaction: discord.Interaction, query: str):
-    if not interaction.guild:
-        return
+    if not interaction.guild or not _admin_only(interaction):
+        return await interaction.response.send_message(
+            "⛔ Manage Server required.", ephemeral=True)
     conn = storage.open_db(interaction.guild.id)
     rows = conn.execute(
         """SELECT channel_name, author_name, content, created_at
