@@ -212,15 +212,16 @@ async def restore(source_gid: int, guild: discord.Guild, *,
             p.stage = "messages"; tick()
             conn = storage.open_db(source_gid)
             limit_sql = f"LIMIT {MSG_LIMIT}" if MSG_LIMIT > 0 else ""
-            for old_cid, new_ch in chan_map.items():
+
+            async def _replay_channel(old_cid, new_ch) -> None:
                 if not _replayable(new_ch):   # text + voice (voice has text chat)
-                    continue
+                    return
                 rows = conn.execute(
                     f"""SELECT id, author_name, author_id, content, embeds_json
                         FROM messages WHERE channel_id = ?
                         ORDER BY id ASC {limit_sql}""", (old_cid,)).fetchall()
                 if not rows:
-                    continue
+                    return
                 # RESUME instead of skip: count what's already in the target channel and
                 # skip that many replayable source rows, so an INTERRUPTED restore can be
                 # finished by re-running (the old code skipped any non-empty channel
@@ -243,10 +244,10 @@ async def restore(source_gid: int, guild: discord.Guild, *,
                     1 for (mid, _a, _i, content, ej) in rows
                     if content or mid in att_mids or _load_embeds(ej))
                 if already >= replayable:        # nothing new to add — fully restored
-                    continue
+                    return
                 wh = await _make_webhook(new_ch)
                 if wh is None:
-                    continue
+                    return
                 skip = already                   # resume point: skip already-sent rows
                 for mid, aname, aid, content, embeds_json in rows:
                     files = _load_attachments(conn, mid, source_gid)
@@ -276,6 +277,23 @@ async def restore(source_gid: int, guild: discord.Guild, *,
                     await wh.delete()
                 except discord.HTTPException:
                     pass
+
+            # Replay up to CONCURRENCY channels at once — each channel uses its own
+            # webhook (a separate Discord rate-limit bucket from the bot token), so
+            # going parallel is a large speedup on multi-channel servers. Bounded by
+            # a semaphore; one channel's unexpected failure is isolated so it can't
+            # abort the whole restore (the old sequential loop had no such isolation).
+            sem = asyncio.Semaphore(max(1, CONCURRENCY))
+
+            async def _bounded(old_cid, new_ch):
+                async with sem:
+                    try:
+                        await _replay_channel(old_cid, new_ch)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("message replay for #%s failed: %s",
+                                    getattr(new_ch, "name", old_cid), e)
+
+            await asyncio.gather(*(_bounded(cid, ch) for cid, ch in chan_map.items()))
             conn.close()
 
         p.stage = "done"; p.done = True; tick()

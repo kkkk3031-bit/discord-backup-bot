@@ -15,6 +15,7 @@ Layout (under config.DATA_DIR):
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import time
 import zipfile
@@ -441,9 +442,6 @@ def dir_size(path: str) -> int:
             except OSError:
                 pass
     return total
-
-
-import shutil
 
 
 def storage_stats() -> dict:

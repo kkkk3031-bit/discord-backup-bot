@@ -458,6 +458,10 @@ async def _h_admin_cmd(request):
         return web.json_response({"error": "forbidden"}, status=403)
     do = request.query.get("do", "diag").lower()
 
+    def _qint(name: str, default: int) -> int:
+        raw = request.query.get(name, "")
+        return int(raw) if raw.lstrip("-").isdigit() else default
+
     if do == "help":
         return web.json_response({
             "actions": ["diag", "scan", "errors", "logs", "integrity_all", "zipscan",
@@ -501,13 +505,13 @@ async def _h_admin_cmd(request):
         })
 
     if do == "errors":
-        n = int(request.query.get("n", "40"))
+        n = _qint("n", 40)
         errs = [ln for ln in _LOG_RING if any(
             k in ln for k in ("ERROR", "Traceback", "Exception")) or "failed" in ln.lower()]
         return web.json_response({"errors": errs[-n:], "count": len(errs)})
 
     if do == "logs":
-        n = int(request.query.get("n", "60"))
+        n = _qint("n", 60)
         grep = request.query.get("grep", "")
         lines = [ln for ln in _LOG_RING if grep.lower() in ln.lower()] if grep else list(_LOG_RING)
         return web.json_response({"lines": lines[-n:]})
@@ -597,7 +601,7 @@ async def _h_admin_cmd(request):
                                   "used_before": before, "used_after": after})
 
     if do == "prune":
-        keep = int(request.query.get("keep", "1"))
+        keep = _qint("keep", 1)
         removed = await asyncio.to_thread(
             storage.prune_all, keep, config.BACKUP_RETENTION_DAYS)
         return web.json_response({"status": "done", "zips_removed": removed})
@@ -989,7 +993,22 @@ def _ago(seconds: Optional[float]) -> str:
 
 
 def _admin_only(interaction: discord.Interaction) -> bool:
-    """Anyone can run backups — admin check removed."""
+    """True if the invoking member has Manage Server (or Administrator).
+
+    Gates every destructive/broadcast/data-exposing command (/clear, /unban_all,
+    /msg, /restore, /schedule, /download, /dedup, /room, /openvoice). Do NOT widen
+    this for a single command — add a dedicated check instead, the way
+    _can_backup() does for /backup, so a relaxation for one command can't silently
+    open every other command sharing this gate."""
+    member = interaction.user
+    perms = getattr(member, "guild_permissions", None)
+    return bool(perms and (perms.manage_guild or perms.administrator))
+
+
+def _can_backup(interaction: discord.Interaction) -> bool:
+    """/backup and /backup_channel are open to any member — non-destructive,
+    doesn't broadcast or expose other members' data beyond what they can already
+    see in-server. Everything else stays behind _admin_only()."""
     return True
 
 
@@ -1004,7 +1023,7 @@ async def backup_cmd(interaction: discord.Interaction, force: bool = False):
     if not interaction.guild:
         return await interaction.response.send_message(
             "هذا الأمر داخل السيرفر فقط / server-only command.", ephemeral=True)
-    if not _admin_only(interaction):
+    if not _can_backup(interaction):
         return await interaction.response.send_message(
             "⛔ تحتاج صلاحية Manage Server / you need Manage Server.",
             ephemeral=True)
@@ -1162,7 +1181,7 @@ async def backup_channel_cmd(interaction: discord.Interaction,
                               channel: discord.TextChannel):
     if not interaction.guild:
         return
-    if not _admin_only(interaction):
+    if not _can_backup(interaction):
         return await interaction.response.send_message(
             "⛔ Manage Server required.", ephemeral=True)
     await interaction.response.defer(thinking=True)
