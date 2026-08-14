@@ -79,7 +79,9 @@ sshbridge.setup(bot, tree)
 #  upload cap, behind a secret token so the link is private (not browsable).
 # --------------------------------------------------------------------------- #
 _PORT = int(os.getenv("PORT", "8080"))
-_PUBLIC_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+# Railway injects RAILWAY_PUBLIC_DOMAIN automatically; self-hosted deployments
+# (behind their own reverse proxy) set PUBLIC_DOMAIN instead.
+_PUBLIC_DOMAIN = (os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("PUBLIC_DOMAIN") or "").strip()
 # Stable, unguessable root secret. Set DOWNLOAD_SECRET to override; otherwise
 # derived from the bot token so links survive restarts without extra config.
 DOWNLOAD_SECRET = (os.getenv("DOWNLOAD_SECRET", "").strip()
