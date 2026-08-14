@@ -1,6 +1,9 @@
 # Secrets — never commit
 .env
 
+# Runtime log (access logs, session IDs) — not source
+bot.log
+
 # Python
 __pycache__/
 *.pyc
