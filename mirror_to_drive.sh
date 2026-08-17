@@ -11,9 +11,9 @@ flock -n 9 || { echo "another mirror run is active — exiting"; exit 0; }
 
 DOWNLOAD_SECRET="10037853c9c398165248dbc481c8c2cb"
 ADMIN_SECRET="75af3a234fb3e17f63e060633b55f37f"
-BASE="https://backup-bot-production.up.railway.app"
+BASE="http://127.0.0.1:4420"
 DEST="gdrive:backupdiscord/by-guild"
-MAP="/home/khaled/projects/discord-backup-bot/drive_links.json"
+MAP="/home/khaled/discord-backup-bot/drive_links.json"
 
 # Live guild list from the bot itself, so servers it joins later mirror too.
 GUILDS=($(curl -s --max-time 30 "$BASE/admin/$ADMIN_SECRET/ping" \
