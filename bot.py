@@ -2260,7 +2260,7 @@ async def help_cmd(interaction: discord.Interaction):
         ),
         color=0x5865F2,
     )
-    embed.set_footer(text="Programmed by @KhaledQ84Ever · x.com/KhaledQ84Ever")
+    embed.set_footer(text="Program By KhaledQ8")
     # Embeds aren't selectable on mobile — also send a tap-to-copy code block so
     # the full command list can be copied.
     await interaction.response.send_message(
